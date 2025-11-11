@@ -93,6 +93,7 @@ function getCallerDirectory(): string {
       const fileName = stack[i]?.getFileName();
 
       if (!fileName) continue;
+      console.log(fileName);
 
       // Handle file:// URLs
       const filePath = fileName.startsWith("file://")
