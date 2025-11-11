@@ -50,10 +50,10 @@ And then add the plugin to your vite config:
 
 ```typescript
 // vite.config.ts
- import { viteSQLTS } from 'vite-sqlts';
+ import { ViteSqlts } from 'vite-sqlts';
 
  export default defineConfig({
-   plugins: [viteSQLTS()],
+   plugins: [ViteSqlts()],
  });
 ```
 

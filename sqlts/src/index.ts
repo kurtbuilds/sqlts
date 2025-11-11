@@ -142,13 +142,21 @@ export function sql<T = void>(
  * @returns A Query instance
  */
 export function sql_file<T>(
-  strings: TemplateStringsArray,
+  path_or_template: string | TemplateStringsArray,
   ...values: any[]
 ): Query<T> {
   // Construct the file path from template literal
-  const filePath = strings.reduce((acc, str, i) => {
-    return acc + str + (values[i] || "");
-  }, "");
+  // const filePath = strings.reduce((acc, str, i) => {
+  //   return acc + str + (values[i] || "");
+  // }, "");
+  console.log(path_or_template);
+  console.log(values);
+  let filePath: string;
+  if (typeof path_or_template === "string") {
+    filePath = path_or_template;
+  } else {
+    filePath = path_or_template[0];
+  }
 
   // Get the caller's directory
   const callerDir = getCallerDirectory();
@@ -161,5 +169,5 @@ export function sql_file<T>(
   // Read the SQL file
   const sqlContent = readFileSync(resolvedPath, "utf-8");
 
-  return new Query<T>(sqlContent, []);
+  return new Query<T>(sqlContent, values);
 }

@@ -1,6 +1,7 @@
 {
   "name": "sqlts",
   "version": "1.0.0",
+  "type": "module",
   "description": "TypeScript SQL query utilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
