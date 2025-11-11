@@ -1,0 +1,7 @@
+{
+  "name": "sqlts-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "sqlts workspace",
+  "packageManager": "pnpm@9.0.0"
+}
