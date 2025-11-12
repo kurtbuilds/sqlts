@@ -123,14 +123,20 @@ function getCallerDirectory(): string {
  * @returns A Query instance
  */
 export function sql<T = void>(
-  query: TemplateStringsArray,
+  query_or_template: string | TemplateStringsArray,
   ...parameters: any[]
 ): Query<T> {
-  const text = query.reduce((acc, str, i) => {
-    return acc + str + (i < parameters.length ? `$${i + 1}` : "");
-  }, "");
+  let query;
 
-  return new Query<T>(text, parameters);
+  if (typeof query_or_template === "string") {
+    query = query_or_template;
+  } else {
+    query = query_or_template.reduce((acc, str, i) => {
+      return acc + str + (i < parameters.length ? `$${i + 1}` : "");
+    }, "");
+  }
+
+  return new Query<T>(query, parameters);
 }
 
 /**
@@ -141,7 +147,7 @@ export function sql<T = void>(
  * @param values - Interpolated values (not typically used, file path should be static)
  * @returns A Query instance
  */
-export function sql_file<T>(
+export function sql_file<T = void>(
   path_or_template: string | TemplateStringsArray,
   ...values: any[]
 ): Query<T> {

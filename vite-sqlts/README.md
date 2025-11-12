@@ -42,27 +42,50 @@ interface User {
   email: string;
 }
 
-// This will be transformed at build time
+// Template literal syntax (recommended)
 const getUserQuery = sql_file<User>`./queries/get-user.sql`;
+
+// Function call syntax (also supported)
+const getUserQuery2 = sql_file<User>("./queries/get-user.sql");
+
+// Function call syntax with additional parameters
+const getUserQuery3 = sql_file<User>("./queries/get-user.sql", param1, param2);
 ```
 
 ### 3. At build time, the plugin transforms the code
 
 **Before transformation:**
 ```typescript
+// Template literal syntax
 const getUserQuery = sql_file<User>`./queries/get-user.sql`;
+
+// Function call syntax
+const getUserQuery2 = sql_file<User>("./queries/get-user.sql");
+
+// Function call syntax with parameters
+const getUserQuery3 = sql_file<User>("./queries/get-user.sql", param1, param2);
 ```
 
 **After transformation:**
 ```typescript
+// Template literal becomes template literal
 const getUserQuery = sql<User>`SELECT * FROM users WHERE id = $1`;
+
+// Function call becomes template literal
+const getUserQuery2 = sql<User>`SELECT * FROM users WHERE id = $1`;
+
+// Function call with parameters becomes function call
+const getUserQuery3 = sql<User>(`SELECT * FROM users WHERE id = $1`, param1, param2);
 ```
 
 ## How it works
 
-1. The plugin scans your source files for `sql_file` calls
+1. The plugin scans your source files for `sql_file` calls (both template literal and function call syntax)
 2. It reads the referenced SQL files relative to the importing file
-3. It replaces `sql_file` with `sql` and embeds the file content as a template literal
+3. It replaces `sql_file` with `sql` and embeds the file content:
+   - Template literals: `sql_file<T>\`file.sql\`` → `sql<T>\`<content>\``
+   - Function calls (no params): `sql_file<T>("file.sql")` → `sql<T>\`<content>\``
+   - Function calls (with params): `sql_file<T>("file.sql", p1, p2)` → `sql<T>(\`<content>\`, p1, p2)`
 4. The transformed code no longer needs runtime file system access
 
 ## Benefits
@@ -71,6 +94,7 @@ const getUserQuery = sql<User>`SELECT * FROM users WHERE id = $1`;
 - **Better performance**: No file system access during execution
 - **Bundler-friendly**: Works seamlessly with Vite's bundling process
 - **Type-safe**: Preserves TypeScript type parameters
+- **Flexible syntax**: Supports both template literal and function call syntax
 - **Zero runtime overhead**: The transformation happens entirely at build time
 
 ## Configuration
@@ -140,7 +164,9 @@ interface User {
   email: string;
 }
 
+// Both syntaxes are supported
 export const getUserQuery = sql_file<User>`./queries/get-user.sql`;
+export const getUserQuery2 = sql_file<User>("./queries/get-user.sql");
 
 export async function getUser(client: DatabaseClient, id: number) {
   return getUserQuery.bind(id).fetch_one(client);
@@ -152,6 +178,7 @@ After building with Vite, the `sql_file` call will be transformed to embed the S
 ## Limitations
 
 - SQL file paths must be static strings (template expressions with variables are not supported)
+- For function call syntax, only the first parameter (file path) is used for transformation; additional parameters are preserved as-is
 - The plugin runs during the build phase, so changes to SQL files require a rebuild
 - Source maps are currently not generated for transformed code
 

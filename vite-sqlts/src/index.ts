@@ -3,42 +3,107 @@ import { resolve, dirname } from "path";
 import type { Plugin } from "vite";
 
 /**
- * Ensures that 'sql' is imported in the code.
- * If sql_file is imported, adds sql to the same import statement.
+ * Escapes SQL content for use in template literals
+ */
+function escapeSqlContent(content: string): string {
+  return content
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\$/g, "\\$");
+}
+
+/**
+ * Reads and processes a SQL file
+ */
+function readSqlFile(filePath: string, baseDir: string): string {
+  const resolvedPath = resolve(baseDir, filePath);
+  const content = readFileSync(resolvedPath, "utf-8");
+  return escapeSqlContent(content);
+}
+
+/**
+ * Builds the replacement string for sql_file calls
+ */
+function buildReplacement(
+  typeParam: string | undefined,
+  sqlContent: string,
+  additionalArgs?: string,
+): string {
+  const typeAnnotation = typeParam ? `<${typeParam}>` : "";
+
+  if (additionalArgs) {
+    return `sql${typeAnnotation}(\`${sqlContent}\`, ${additionalArgs})`;
+  }
+  return `sql${typeAnnotation}\`${sqlContent}\``;
+}
+
+/**
+ * Adds 'sql' to an existing import statement that contains 'sql_file'
  */
 function ensureSqlImport(code: string): string {
-  // Check if 'sql' is already imported
-  if (/\bsql\b/.test(code.split('\n')[0]) || /import.*\bsql\b.*from/.test(code)) {
-    // Already has sql imported or used, don't modify
+  // Skip if sql is already imported
+  if (
+    /\bsql\b/.test(code.split("\n")[0]) ||
+    /import.*\bsql\b.*from/.test(code)
+  ) {
     return code;
   }
 
-  // Find import statement containing sql_file
-  const sqlFileImportRegex = /^(import\s+{[^}]*)\bsql_file\b([^}]*}.*from\s+['"][^'"]+['"])/m;
-  const match = code.match(sqlFileImportRegex);
+  // Find and modify sql_file import
+  const importRegex =
+    /(import\s+{[^}]*)\bsql_file\b([^}]*}.*from\s+['"][^'"]+['"])/m;
+  return code.replace(importRegex, "$1sql_file, sql$2");
+}
 
-  if (match) {
-    // Add sql to the existing import that has sql_file
-    const before = match[1];
-    const after = match[2];
+/**
+ * Checks if a file should be processed based on include/exclude patterns
+ */
+function shouldProcessFile(
+  id: string,
+  include: RegExp | RegExp[],
+  exclude: RegExp | RegExp[],
+): boolean {
+  const includePatterns = Array.isArray(include) ? include : [include];
+  const excludePatterns = Array.isArray(exclude) ? exclude : [exclude];
 
-    // Check if sql_file is the only import
-    if (before.trim().endsWith('{') && after.trim().startsWith('}')) {
-      // { sql_file } => { sql_file, sql }
-      return code.replace(sqlFileImportRegex, `${before}sql_file, sql${after}`);
-    } else if (before.trim().endsWith(',') || before.includes(',')) {
-      // { something, sql_file } => { something, sql_file, sql }
-      return code.replace(sqlFileImportRegex, `${before}sql_file, sql${after}`);
-    } else {
-      // { sql_file } => { sql_file, sql }
-      return code.replace(sqlFileImportRegex, `${before}sql_file, sql${after}`);
-    }
-  }
+  if (excludePatterns.some((pattern) => pattern.test(id))) return false;
+  if (!includePatterns.some((pattern) => pattern.test(id))) return false;
 
-  // If no sql_file import found, we can't automatically add sql import
-  // This shouldn't happen if we transformed sql_file calls
-  console.warn('[vite-sqlts] Could not find sql_file import to add sql to');
-  return code;
+  return true;
+}
+
+/**
+ * Processes all sql_file calls in code and returns transformed code
+ */
+function transformSqlFileCalls(
+  code: string,
+  fileDir: string,
+  warn: (msg: string) => void,
+): string {
+  // Combined regex that matches both syntaxes
+  const sqlFileRegex =
+    /\bsql_file(?:<([^>]+)>)?(?:`([^`]+)`|\(\s*["']([^"']+)["']\s*(?:,\s*([^)]*))?\s*\))/g;
+
+  return code.replace(
+    sqlFileRegex,
+    (fullMatch, typeParam, templatePath, functionPath, additionalArgs) => {
+      const filePath = templatePath || functionPath;
+
+      console.log(`[vite-sqlts] Found: ${fullMatch}`);
+
+      try {
+        const sqlContent = readSqlFile(filePath, fileDir);
+        console.log(`[vite-sqlts] Read SQL file (${sqlContent.length} chars)`);
+
+        return buildReplacement(typeParam, sqlContent, additionalArgs?.trim());
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        warn(`Failed to read SQL file "${filePath}": ${errorMessage}`);
+        return fullMatch;
+      }
+    },
+  );
 }
 
 export interface ViteSqltsOptions {
@@ -60,93 +125,32 @@ export function ViteSqlts(options: ViteSqltsOptions = {}): Plugin {
 
   return {
     name: "vite-sqlts",
-
     enforce: "pre",
 
     transform(code: string, id: string) {
-      // Check if file should be processed
-      const includePatterns = Array.isArray(include) ? include : [include];
-      const excludePatterns = Array.isArray(exclude) ? exclude : [exclude];
-
-      if (excludePatterns.some((pattern) => pattern.test(id))) {
-        return null;
-      }
-
-      if (!includePatterns.some((pattern) => pattern.test(id))) {
-        return null;
-      }
-
-      // Check if the file contains sql_file calls
-      if (!code.includes("sql_file")) {
+      if (
+        !shouldProcessFile(id, include, exclude) ||
+        !code.includes("sql_file")
+      ) {
         return null;
       }
 
       console.log(`[vite-sqlts] Processing file: ${id}`);
 
-      // Get the directory of the current file
-      const fileDir = dirname(id);
+      const transformedCode = transformSqlFileCalls(
+        code,
+        dirname(id),
+        this.warn,
+      );
 
-      // Regular expression to match sql_file calls
-      // Matches: sql_file<Type>`path/to/file.sql`
-      // Captures: type parameter (optional) and file path
-      const sqlFileRegex = /\bsql_file(?:<([^>]+)>)?`([^`]+)`/g;
+      if (transformedCode === code) return null;
 
-      let transformedCode = code;
-      let match: RegExpExecArray | null;
+      console.log(`[vite-sqlts] Transformation complete for ${id}`);
 
-      // Reset regex state
-      sqlFileRegex.lastIndex = 0;
-
-      while ((match = sqlFileRegex.exec(code)) !== null) {
-        const fullMatch = match[0];
-        const typeParam = match[1]; // The type parameter, if present
-        const filePath = match[2]; // The SQL file path
-
-        console.log(`[vite-sqlts] Found: ${fullMatch}`);
-
-        try {
-          // Resolve the SQL file path relative to the current file
-          const resolvedPath = resolve(fileDir, filePath);
-
-          // Read the SQL file content
-          const sqlContent = readFileSync(resolvedPath, "utf-8");
-
-          console.log(`[vite-sqlts] Read SQL file (${sqlContent.length} chars)`);
-          // Escape backticks and backslashes in SQL content for template literal
-          const escapedContent = sqlContent
-            .replace(/\\/g, "\\\\")
-            .replace(/`/g, "\\`")
-            .replace(/\$/g, "\\$");
-
-          // Build the replacement
-          const typeAnnotation = typeParam ? `<${typeParam}>` : "";
-          const replacement = `sql${typeAnnotation}\`${escapedContent}\``;
-
-          // Replace in the code
-          transformedCode = transformedCode.replace(fullMatch, replacement);
-        } catch (error) {
-          // If file cannot be read, log a warning but don't fail the build
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          this.warn(
-            `Failed to read SQL file "${filePath}" in ${id}: ${errorMessage}`,
-          );
-        }
-      }
-
-      // Only return if transformations were made
-      if (transformedCode !== code) {
-        // Ensure 'sql' is imported
-        transformedCode = ensureSqlImport(transformedCode);
-
-        console.log(`[vite-sqlts] Transformation complete for ${id}`);
-        return {
-          code: transformedCode,
-          map: null, // You could generate a source map here if needed
-        };
-      }
-
-      return null;
+      return {
+        code: ensureSqlImport(transformedCode),
+        map: null,
+      };
     },
   };
 }
